@@ -12,6 +12,7 @@ import org.springframework.scheduling.TaskScheduler;
 import org.springframework.scheduling.support.CronTrigger;
 import org.springframework.stereotype.Service;
 
+import java.lang.reflect.Field;
 import java.util.*;
 import java.util.concurrent.ScheduledFuture;
 import java.util.stream.Collectors;
@@ -111,7 +112,7 @@ public class SchedulerService implements TaskRunner {
         try {
             // <editor-fold defaultstate="collapsed" desc="Function to be implemented">
             log.info(String.format("Triggering %s", schedulerEntity.getJobName()));
-            if (this.exec(schedulerEntity)) {
+            if (this.exec(objectToString(schedulerEntity))) {
                 jobStatusMap.put(schedulerEntity.getId(), StatusEnum.COMPLETED);
                 log.info(String.format("Successfully completed %s ", schedulerEntity.getJobName()));
             } else {
@@ -120,10 +121,18 @@ public class SchedulerService implements TaskRunner {
             }
             // </editor-fold>
         } catch (Exception e) {
+            log.error(e.toString());
             jobStatusMap.put(schedulerEntity.getId(), StatusEnum.FAILED);
         }
+    }
 
-
+    private String objectToString(Object o) throws IllegalAccessException {
+        StringBuilder stringBuilder = new StringBuilder();
+        for (Field field : o.getClass().getDeclaredFields()) {
+            field.setAccessible(true);
+            stringBuilder.append(String.format("%s=%s%n", field.getName(), field.get(o)));
+        }
+        return stringBuilder.toString().trim();
     }
 
     public String cronExpression(String minutes, String hour, String dayOfMonth, String month, String dayOfWeek, boolean ifWeekDayEnable) {

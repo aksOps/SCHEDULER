@@ -35,6 +35,9 @@ public class SchedulerEntity {
     private JobType jobType;
 
     @NonNull
+    private String appName;
+
+    @NonNull
     private String functionToTrigger;
 
     @NonNull

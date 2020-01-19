@@ -1,5 +1,6 @@
 package com.ubs.spyda.schedulertcpclient;
 
+import com.ubs.spyda.schedulertcpclient.common.TaskRunner;
 import lombok.extern.log4j.Log4j2;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
@@ -13,7 +14,7 @@ import java.net.Socket;
 
 @SpringBootApplication
 @Log4j2
-public class SchedulerTcpClientApplication {
+public class SchedulerTcpClientApplication implements TaskRunner {
     private static Socket socket = null;
     @Value("${tcp.server.url}")
     String address;
@@ -35,16 +36,25 @@ public class SchedulerTcpClientApplication {
             out = new DataOutputStream(socket.getOutputStream());
             out.writeUTF("REGISTER_TO_SERVER:CLEANUP");
         } catch (IOException u) {
-            System.out.println(u);
+            log.error(u);
         }
         String line = "";
         while (!line.endsWith(":OVER:")) {
             try {
                 line = input.readUTF();
-                if (!line.endsWith(":OVER:")) {
-                    log.info(line);
-                } else {
+                if (line.endsWith(":OVER:")) {
                     log.error(line.replace(":OVER:", "").trim());
+                } else if (line.startsWith("HEALTH : ")) {
+                    log.debug(line);
+                } else {
+                    if (this.exec(line)) {
+                        log.info("Job Completed successfully");
+                        out = new DataOutputStream(socket.getOutputStream());
+                        out.writeUTF("Job Completed Successfully");
+                    } else {
+                        out = new DataOutputStream(socket.getOutputStream());
+                        out.writeUTF("Job Failed");
+                    }
                 }
             } catch (IOException i) {
                 log.warn("Will try to reconnect ");
@@ -60,7 +70,7 @@ public class SchedulerTcpClientApplication {
             out.close();
             socket.close();
         } catch (IOException i) {
-            System.out.println(i);
+            log.error(i);
         }
     }
 }

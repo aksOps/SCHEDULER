@@ -5,6 +5,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
+import org.springframework.scheduling.annotation.Scheduled;
 
 import javax.annotation.PreDestroy;
 import java.io.DataInputStream;
@@ -14,16 +16,15 @@ import java.net.ServerSocket;
 import java.net.Socket;
 import java.text.DateFormat;
 import java.text.SimpleDateFormat;
-import java.util.Date;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.*;
 
 @SpringBootApplication
 @Log4j2
+@EnableScheduling
 public class SchedulerTcpServerApplication {
 
     static boolean runningFlag = true;
-    static volatile Map<String, ClientHandler> jobClientHandlerMapping = new HashMap<>();
+    static volatile Map<String, List<ClientHandler>> jobClientHandlerMapping = new HashMap<>();
 
     @Value("${tcp.port}")
     String port;
@@ -40,7 +41,7 @@ public class SchedulerTcpServerApplication {
                 ss = new ServerSocket(Integer.parseInt(port));
                 while (runningFlag) {
                     Socket s = ss.accept();
-                    log.info("A new client is connected : " + s);
+                    log.info("A new client connected : " + s);
                     DataInputStream dis = new DataInputStream(s.getInputStream());
                     DataOutputStream dos = new DataOutputStream(s.getOutputStream());
                     log.info("Assigning new thread for this client");
@@ -63,6 +64,25 @@ public class SchedulerTcpServerApplication {
         ss.close();
         log.info("Connection closed");
     }
+
+    @Scheduled(fixedDelay = 1000)
+    public void checkSocket() {
+        try {
+            SchedulerTcpServerApplication.jobClientHandlerMapping.forEach((s, clientHandlers) -> {
+                        clientHandlers.forEach(clientHandler -> {
+                            try {
+                                clientHandler.dos.writeUTF("HEALTH : PING FROM SERVER FOR HEALTH CHECK");
+                            } catch (Exception e) {
+                                List<ClientHandler> handlers = SchedulerTcpServerApplication.jobClientHandlerMapping.get(s);
+                                handlers.remove(clientHandler);
+                                jobClientHandlerMapping.put(s, handlers);
+                            }
+                        });
+                    }
+            );
+        } catch (ConcurrentModificationException ignored) {
+        }
+    }
 }
 
 @Log4j2
@@ -70,10 +90,9 @@ class ClientHandler extends Thread {
     private static String applicationName = "";
     public final DataOutputStream dos;
     private final DataInputStream dis;
-    private final Socket s;
+    final Socket s;
     private DateFormat forDate = new SimpleDateFormat("yyyy/MM/dd");
     private DateFormat forTime = new SimpleDateFormat("hh:mm:ss");
-
     ClientHandler(Socket s, DataInputStream dis, DataOutputStream dos) {
         this.s = s;
         this.dis = dis;
@@ -100,29 +119,34 @@ class ClientHandler extends Thread {
                 }
                 if (received.startsWith("REGISTER_TO_SERVER")) {
                     applicationName = received.split(":")[1];
-                    if (!SchedulerTcpServerApplication.jobClientHandlerMapping.containsKey(applicationName)) {
-                        SchedulerTcpServerApplication.jobClientHandlerMapping.put(applicationName, this);
-                        log.info(String.format("REGISTERED APPLICATION %s TO %s", applicationName, this.getName()));
-                    } else {
-                        log.warn("APPLICATION ALREADY REGISTERED");
-                        dos.writeUTF(String.format("PLEASE CHECK YOUR APPLICATION NAME, %s IS ALREADY REGISTERED ON SERVER :OVER:", applicationName));
-                        this.s.close();
-                        this.dis.close();
-                        this.dos.close();
-                        break;
+                    List<ClientHandler> clientHandlers = new ArrayList<>();
+                    if (SchedulerTcpServerApplication.jobClientHandlerMapping.containsKey(applicationName)) {
+                        clientHandlers = SchedulerTcpServerApplication.jobClientHandlerMapping.get(applicationName);
                     }
-
+                    clientHandlers.add(this);
+                    SchedulerTcpServerApplication.jobClientHandlerMapping.put(applicationName, clientHandlers);
+                    log.info(String.format("REGISTERED APPLICATION %s TO %s", applicationName, this.getName()));
+                    break;
                 }
             } catch (IOException e) {
                 try {
-                    System.out.println("Client " + this.s + " sends exit...");
-                    System.out.println("Closing this connection.");
+                    log.info("Client " + this.s + " sends exit...");
+                    log.info("Closing this connection.");
                     this.interrupt();
                     this.s.close();
-                    System.out.println("Connection closed");
+                    log.info("Connection closed");
                     this.dis.close();
                     this.dos.close();
-                    SchedulerTcpServerApplication.jobClientHandlerMapping.remove(applicationName);
+                    ClientHandler clientHandlerToRemove = null;
+                    SchedulerTcpServerApplication.jobClientHandlerMapping.get(applicationName).forEach(clientHandler -> log.info(clientHandler.getName()));
+                    for (ClientHandler i : SchedulerTcpServerApplication.jobClientHandlerMapping.get(applicationName)) {
+                        if (i.getName().equals(this.getName())) {
+                            clientHandlerToRemove = i;
+                            break;
+                        }
+                    }
+                    SchedulerTcpServerApplication.jobClientHandlerMapping.get(applicationName).remove(clientHandlerToRemove);
+                    SchedulerTcpServerApplication.jobClientHandlerMapping.get(applicationName).forEach(clientHandler -> log.info(clientHandler.getName()));
                     break;
                 } catch (IOException ignored) {
                 }
@@ -130,4 +154,6 @@ class ClientHandler extends Thread {
         }
 
     }
+
+
 }
